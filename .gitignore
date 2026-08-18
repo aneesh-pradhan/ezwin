@@ -1,0 +1,12 @@
+/ezwin
+*.o
+*.d
+/src/*.o
+/src/*.d
+/build/
+.cache/
+compile_commands.json
+*.swp
+*~
+.idea/
+.vscode/
