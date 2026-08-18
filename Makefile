@@ -34,9 +34,12 @@ clean:
 
 install: ezwin
 	install -d $(DESTDIR)$(PREFIX)/bin
+	install -d $(DESTDIR)$(PREFIX)/share/ezwin
 	install -m 755 ezwin $(DESTDIR)$(PREFIX)/bin/ezwin
+	install -m 644 res/uefi-ntfs.img $(DESTDIR)$(PREFIX)/share/ezwin/uefi-ntfs.img
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/ezwin
+	rm -f $(DESTDIR)$(PREFIX)/share/ezwin/uefi-ntfs.img
 
 -include $(DEPS)

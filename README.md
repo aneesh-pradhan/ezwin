@@ -2,62 +2,57 @@
 
 A native Linux terminal tool that writes a **UEFI-bootable Windows 11 USB installer** from the hybrid `.iso` files Microsoft publishes.
 
-`dd`, Etcher-style raw flash, and similar tools fail here for two separate reasons:
+`dd` fails here because Windows ISOs are UDF hybrids, not disk images. FAT32 also cannot hold a >4 GiB `install.wim`.
 
-1. **Hybrid layout.** Windows ISOs are UDF/ISO9660 images with a hybrid MBR meant for optical media. Writing the image byte-for-byte to a USB stick does not produce a disk that firmware will boot as a hard drive (no GPT, no EFI System partition).
-2. **The 4 GiB FAT32 limit.** UEFI firmware is required to read FAT32. `sources/install.wim` on current Windows 11 ISOs is larger than 4 GiB, so it cannot live on FAT32 as a single file.
+The default layout follows **Microsoft’s Media Creation Tool**, documented from a working stick in [`docs/microsoft-mct-usb.md`](docs/microsoft-mct-usb.md):
 
-ezwin does what Microsoft’s own media tooling does, without leaving Linux: GPT + a single FAT32 EFI System partition, copy the installer files, and **split** an oversized `install.wim` / `install.esd` into `install.swm` parts that Windows Setup understands natively. That path stays Secure Boot friendly (the Microsoft-signed `bootx64.efi` from the ISO is used as-is).
+- **MBR**, one primary partition, type `0x0c` (FAT32 LBA), **active**, starting at **1 MiB**
+- **32 GiB FAT32** on USBs larger than that (Windows’ FAT32 cap); the rest of the stick is left empty
+- Volume label **`ESD-USB`**
+- Oversized `install.wim` split to `install.swm` / `install2.swm` at 3800 MiB
+- Firmware boots `\EFI\BOOT\bootx64.efi` from that same volume — no second partition, no UEFI:NTFS stub
+
+ezwin wipes GPT leftovers more thoroughly than MCT did on the inspected stick. It does **not** copy Microsoft `bootsect` MBR/VBR code; UEFI loads the EFI bootloader from the filesystem the same way MCT does.
+
+Rufus-style GPT+NTFS and WoeUSB-style NTFS+UEFI:NTFS remain available as `--layout ntfs` and `--layout mbr`.
 
 ## Build
 
-Dependencies:
-
 | Fedora | Debian / Ubuntu | Arch |
 | --- | --- | --- |
-| `gcc-c++` `make` `pkgconf` `systemd-devel` `libfdisk-devel` `libmount-devel` `wimlib-devel` `dosfstools` | `g++` `make` `pkg-config` `libudev-dev` `libfdisk-dev` `libmount-dev` `libwim-dev` `dosfstools` | `gcc` `make` `pkgconf` `util-linux` `wimlib` `dosfstools` |
+| `gcc-c++` `make` `pkgconf` `systemd-devel` `libfdisk-devel` `libmount-devel` `wimlib-devel` `dosfstools` `ntfsprogs` | `g++` `make` `pkg-config` `libudev-dev` `libfdisk-dev` `libmount-dev` `libwim-dev` `dosfstools` `ntfs-3g` | `gcc` `make` `pkgconf` `util-linux` `wimlib` `dosfstools` `ntfs-3g` |
 
 ```bash
 make
-sudo make install   # optional, PREFIX=/usr/local
+sudo make install   # optional; also installs res/uefi-ntfs.img
 ```
 
 ## Usage
 
 ```bash
-# list USB disks
 ezwin list
-
-# inspect an ISO and device without writing
-sudo ezwin flash --dry-run Win11.iso /dev/sdb
-
-# write the installer (will prompt you to type the device path)
+sudo ezwin flash --dry-run Win11.iso            # uses the only plugged-in USB
+sudo ezwin flash Win11.iso                      # same, then type yes to erase
 sudo ezwin flash Win11.iso /dev/sdb
 
-# scripts
-sudo ezwin flash -y Win11.iso /dev/sdb
+sudo ezwin flash --layout fat32 Win11.iso       # default (Microsoft USB tool)
+sudo ezwin flash --layout ntfs Win11.iso        # Rufus-style GPT + UEFI:NTFS
+sudo ezwin flash --layout mbr Win11.iso /dev/sdb   # WoeUSB-style MBR
+sudo ezwin flash --layout dual Win11.iso /dev/sdb
 ```
 
-`ezwin Win11.iso /dev/sdb` is accepted as shorthand for `flash`.
+If several USB disks are plugged in, pass the device path (`ezwin list`).
 
-You can pass a stable by-id path:
+## Layouts
 
-```bash
-sudo ezwin flash Win11.iso /dev/disk/by-id/usb-SanDisk_...
-```
-
-Non-USB targets are refused unless you pass `--force`.
-
-## What it writes
-
-| Piece | Choice |
+| `--layout` | What it writes |
 | --- | --- |
-| Partition table | GPT |
-| Partition | One disk-sized EFI System partition |
-| Filesystem | FAT32 (`mkfs.fat`) |
-| Oversized WIM/ESD | `wimlib` split to `sources/install.swm` (+ `install2.swm`, …) |
+| `fat32` (default) | MBR · one FAT32 partition (32 GiB on large USBs, `ESD-USB`) · oversized WIM split to `install.swm` |
+| `ntfs` | GPT · NTFS (full ISO, first partition) · 1 MiB UEFI:NTFS stub (Basic Data, no drive letter) |
+| `mbr` | MBR · NTFS first · 1 MiB UEFI:NTFS stub (WoeUSB-style; pick the UEFI boot entry) |
+| `dual` | MBR · FAT32 boot · NTFS payload |
 
-BIOS/CSM boot is not a goal. Windows 11 wants UEFI.
+`res/uefi-ntfs.img` comes from [Rufus](https://github.com/pbatard/rufus) / [UEFI:NTFS](https://github.com/pbatard/uefi-ntfs); see `third_party/uefi-ntfs/NOTICE`. Needed only for `--layout ntfs` / `mbr`.
 
 ## Status
 

@@ -1,0 +1,9 @@
+res/uefi-ntfs.img is the 1 MiB signed UEFI:NTFS FAT image shipped by Rufus:
+
+  https://github.com/pbatard/rufus/tree/master/res/uefi
+
+It contains the UEFI:NTFS bootloader and NTFS EFI driver by Pete Batard
+<pete@akeo.ie>, used only for `ezwin flash --layout uefi-ntfs`.
+
+License: GNU GPL v3 or later (Rufus / UEFI:NTFS).
+Source:  https://github.com/pbatard/uefi-ntfs

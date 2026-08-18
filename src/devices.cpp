@@ -170,6 +170,25 @@ Device inspect_device(const std::string& path) {
     return dev;
 }
 
+std::string default_usb_disk() {
+    std::vector<Device> usb;
+    for (const auto& d : list_block_disks()) {
+        if (d.usb && d.whole_disk) {
+            usb.push_back(d);
+        }
+    }
+    if (usb.empty()) {
+        throw Error("no USB disk found — plug one in, or pass the device path (ezwin list)");
+    }
+    if (usb.size() > 1) {
+        print_device_table(usb, false);
+        throw Error("multiple USB disks — pass the device (for example /dev/sdb)");
+    }
+    info("using " + usb[0].path + "  " + format_bytes(usb[0].size_bytes) +
+         (usb[0].model.empty() ? "" : "  " + usb[0].model));
+    return usb[0].path;
+}
+
 void print_device_table(const std::vector<Device>& disks, bool usb_only) {
     bool any = false;
     std::cout << std::left << std::setw(16) << "DEVICE" << std::setw(10) << "SIZE" << std::setw(8)
