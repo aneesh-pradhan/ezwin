@@ -1,0 +1,82 @@
+# Read on both initial configuration and CMake's compiler probes.
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/../.llvm-version" EZWIN_LLVM_VERSION LIMIT_COUNT 1)
+if(NOT DEFINED LLVM_ROOT)
+    if(DEFINED ENV{LLVM_ROOT} AND NOT "$ENV{LLVM_ROOT}" STREQUAL "")
+        set(LLVM_ROOT "$ENV{LLVM_ROOT}")
+    else()
+        get_filename_component(LLVM_ROOT
+            "${CMAKE_CURRENT_LIST_DIR}/../.toolchains/llvm-${EZWIN_LLVM_VERSION}" ABSOLUTE)
+    endif()
+endif()
+set(LLVM_ROOT "${LLVM_ROOT}" CACHE PATH "Root of the exact pinned LLVM release")
+list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES LLVM_ROOT)
+
+if(NOT EXISTS "${LLVM_ROOT}/bin/clang++")
+    message(FATAL_ERROR "LLVM ${EZWIN_LLVM_VERSION} is required. Run: bash scripts/install-llvm.sh\n"
+        "Or set LLVM_ROOT to a complete LLVM ${EZWIN_LLVM_VERSION} installation.")
+endif()
+file(REAL_PATH "${LLVM_ROOT}" LLVM_ROOT)
+
+# Only the compiler tools need these host compatibility libraries. Launchers
+# preserve this environment when Ninja builds outside the configure process.
+set(llvm_host_libs "${LLVM_ROOT}/host-libs/usr/lib/x86_64-linux-gnu")
+if(IS_DIRECTORY "${llvm_host_libs}")
+    set(ENV{LD_LIBRARY_PATH} "${llvm_host_libs}:$ENV{LD_LIBRARY_PATH}")
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${CMAKE_COMMAND};-E;env;LD_LIBRARY_PATH=${llvm_host_libs}")
+    set(CMAKE_CXX_LINKER_LAUNCHER "${CMAKE_CXX_COMPILER_LAUNCHER}")
+endif()
+
+# Reject overrides instead of silently accepting or ignoring another compiler.
+foreach(candidate IN ITEMS "${CMAKE_CXX_COMPILER}" "$ENV{CXX}")
+    if(NOT candidate STREQUAL "")
+        unset(candidate_path)
+        find_program(candidate_path NAMES "${candidate}" NO_CACHE)
+        if(NOT candidate_path)
+            message(FATAL_ERROR "Cannot resolve C++ compiler: ${candidate}")
+        endif()
+        file(REAL_PATH "${candidate_path}" candidate_real)
+        file(REAL_PATH "${LLVM_ROOT}/bin/clang++" pinned_real)
+        if(NOT candidate_real STREQUAL pinned_real)
+            message(FATAL_ERROR "ezwin requires the pinned Clang at ${LLVM_ROOT}/bin/clang++; got ${candidate}")
+        endif()
+    endif()
+endforeach()
+
+foreach(tool IN ITEMS clang++ ld.lld llvm-ar llvm-ranlib llvm-nm llvm-strip llvm-objcopy)
+    if(NOT EXISTS "${LLVM_ROOT}/bin/${tool}")
+        message(FATAL_ERROR "Incomplete LLVM installation: missing ${tool} in ${LLVM_ROOT}/bin")
+    endif()
+    execute_process(COMMAND "${LLVM_ROOT}/bin/${tool}" --version
+        OUTPUT_VARIABLE tool_version ERROR_VARIABLE tool_error RESULT_VARIABLE tool_result)
+    string(REPLACE "." "\\." version_pattern "${EZWIN_LLVM_VERSION}")
+    if(NOT tool_result EQUAL 0 OR NOT tool_version MATCHES "${version_pattern}([^0-9.]|$)")
+        message(FATAL_ERROR "${tool} must be LLVM ${EZWIN_LLVM_VERSION}: ${tool_version}${tool_error}")
+    endif()
+endforeach()
+
+set(CMAKE_CXX_COMPILER "${LLVM_ROOT}/bin/clang++" CACHE FILEPATH "Pinned Clang" FORCE)
+set(CMAKE_LINKER "${LLVM_ROOT}/bin/ld.lld" CACHE FILEPATH "Pinned LLD" FORCE)
+set(CMAKE_AR "${LLVM_ROOT}/bin/llvm-ar" CACHE FILEPATH "Pinned LLVM ar" FORCE)
+set(CMAKE_RANLIB "${LLVM_ROOT}/bin/llvm-ranlib" CACHE FILEPATH "Pinned LLVM ranlib" FORCE)
+set(CMAKE_NM "${LLVM_ROOT}/bin/llvm-nm" CACHE FILEPATH "Pinned LLVM nm" FORCE)
+set(CMAKE_STRIP "${LLVM_ROOT}/bin/llvm-strip" CACHE FILEPATH "Pinned LLVM strip" FORCE)
+set(CMAKE_OBJCOPY "${LLVM_ROOT}/bin/llvm-objcopy" CACHE FILEPATH "Pinned LLVM objcopy" FORCE)
+set(CMAKE_CXX_COMPILER_AR "${CMAKE_AR}" CACHE FILEPATH "Pinned LLVM compiler ar" FORCE)
+set(CMAKE_CXX_COMPILER_RANLIB "${CMAKE_RANLIB}" CACHE FILEPATH "Pinned LLVM compiler ranlib" FORCE)
+
+file(GLOB runtime_candidates "${LLVM_ROOT}/lib/libc++.so" "${LLVM_ROOT}/lib/*/libc++.so")
+list(LENGTH runtime_candidates runtime_count)
+if(NOT runtime_count EQUAL 1)
+    message(FATAL_ERROR "Expected one libc++ runtime in ${LLVM_ROOT}/lib; use the official pinned archive.")
+endif()
+list(GET runtime_candidates 0 libcxx)
+get_filename_component(EZWIN_LLVM_RUNTIME_DIR "${libcxx}" DIRECTORY)
+foreach(runtime IN ITEMS libc++abi.so libunwind.so)
+    if(NOT EXISTS "${EZWIN_LLVM_RUNTIME_DIR}/${runtime}")
+        message(FATAL_ERROR "Missing LLVM runtime: ${EZWIN_LLVM_RUNTIME_DIR}/${runtime}")
+    endif()
+endforeach()
+
+set(CMAKE_CXX_FLAGS_INIT "$ENV{CPPFLAGS} --no-default-config -stdlib=libc++")
+set(CMAKE_EXE_LINKER_FLAGS_INIT
+    "--ld-path=\"${CMAKE_LINKER}\" --rtlib=compiler-rt --unwindlib=libunwind -L\"${EZWIN_LLVM_RUNTIME_DIR}\" -Wl,-rpath,\"${EZWIN_LLVM_RUNTIME_DIR}\"")

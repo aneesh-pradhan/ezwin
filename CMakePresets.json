@@ -1,0 +1,20 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 30, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "llvm",
+      "displayName": "Pinned LLVM / C++26",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/llvm",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [{ "name": "llvm", "configurePreset": "llvm" }],
+  "testPresets": [
+    { "name": "llvm", "configurePreset": "llvm", "output": { "outputOnFailure": true } }
+  ]
+}

@@ -1,0 +1,40 @@
+name: LLVM build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  llvm:
+    name: LLVM / C++26
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and system-library dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make ninja-build pkg-config curl xz-utils zstd libc6-dev libstdc++6 zlib1g liblzma5 libudev-dev libfdisk-dev libmount-dev libwim-dev
+          python3 -m pip install --user cmake==4.3.0
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Cache pinned LLVM
+        uses: actions/cache@v4
+        with:
+          path: .toolchains
+          key: llvm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.llvm-version', 'toolchains/SHA256SUMS', 'scripts/install-llvm.sh') }}
+      - name: Install checksum-verified LLVM
+        run: bash scripts/install-llvm.sh
+      - name: Build through Make and test
+        run: make test
+      - name: Verify toolchain policy
+        run: python3 tests/test_toolchain.py
+      - name: Verify direct Ninja entry point
+        run: ninja -C build/llvm
+      - name: Test staged installation
+        run: |
+          DESTDIR="$RUNNER_TEMP/ezwin-install" make install
+          "$RUNNER_TEMP/ezwin-install/usr/local/bin/ezwin" --version
+          test -f "$RUNNER_TEMP/ezwin-install/usr/local/share/ezwin/uefi-ntfs.img"

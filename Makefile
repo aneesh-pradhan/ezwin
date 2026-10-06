@@ -1,45 +1,32 @@
-CXX      ?= g++
-PREFIX   ?= /usr/local
-CXXFLAGS ?= -std=c++20 -O2 -g -Wall -Wextra -Wpedantic
-CXXFLAGS += -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -fstack-protector-strong
-CPPFLAGS += -I src
+# CMake owns the toolchain policy; Make and Ninja use the same build graph.
+PREFIX ?= /usr/local
 
-# util-linux ships libfdisk as "fdisk.pc" on Fedora/Debian.
-ifeq ($(shell pkg-config --exists fdisk && echo yes),yes)
-FDISK_PKG := fdisk
-else
-FDISK_PKG := libfdisk
+# Do not export GNU Make's built-in CXX=g++; validate explicit overrides.
+ifneq ($(origin CXX),default)
+export CXX
 endif
+export CXXFLAGS CPPFLAGS LDFLAGS
 
-PKGS     := libudev mount wimlib $(FDISK_PKG)
-CXXFLAGS += $(shell pkg-config --cflags $(PKGS))
-LDLIBS   += $(shell pkg-config --libs $(PKGS))
+.PHONY: all configure test install uninstall clean toolchain
+all: configure
+	cmake --build --preset llvm
+	cmake -E copy_if_different build/llvm/ezwin ezwin
 
-SRCS := src/main.cpp src/common.cpp src/devices.cpp src/disk.cpp src/flash.cpp
-OBJS := $(SRCS:.cpp=.o)
-DEPS := $(OBJS:.o=.d)
+configure:
+	cmake --preset llvm -DCMAKE_INSTALL_PREFIX="$(PREFIX)"
 
-.PHONY: all clean install uninstall
+test: all
+	ctest --preset llvm
 
-all: ezwin
-
-ezwin: $(OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
-
-src/%.o: src/%.cpp
-	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -MMD -MP -c -o $@ $<
-
-clean:
-	rm -f ezwin $(OBJS) $(DEPS)
-
-install: ezwin
-	install -d $(DESTDIR)$(PREFIX)/bin
-	install -d $(DESTDIR)$(PREFIX)/share/ezwin
-	install -m 755 ezwin $(DESTDIR)$(PREFIX)/bin/ezwin
-	install -m 644 res/uefi-ntfs.img $(DESTDIR)$(PREFIX)/share/ezwin/uefi-ntfs.img
+install:
+	cmake --install build/llvm --prefix "$(PREFIX)"
 
 uninstall:
-	rm -f $(DESTDIR)$(PREFIX)/bin/ezwin
-	rm -f $(DESTDIR)$(PREFIX)/share/ezwin/uefi-ntfs.img
+	rm -f "$(DESTDIR)$(PREFIX)/bin/ezwin" "$(DESTDIR)$(PREFIX)/share/ezwin/uefi-ntfs.img"
 
--include $(DEPS)
+clean:
+	cmake --build build/llvm --target clean
+	cmake -E rm -f ezwin
+
+toolchain:
+	bash scripts/install-llvm.sh

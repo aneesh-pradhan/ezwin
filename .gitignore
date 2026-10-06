@@ -4,6 +4,17 @@
 /src/*.o
 /src/*.d
 /build/
+/.toolchains/
+/CMakeUserPresets.json
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/CTestTestfile.cmake
+/Testing/
+/build.ninja
+/rules.ninja
+/.ninja_deps
+/.ninja_log
 .cache/
 compile_commands.json
 *.swp

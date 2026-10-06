@@ -1,0 +1,18 @@
+#pragma once
+#include <version>
+
+#if !defined(__clang__) || defined(__apple_build_version__)
+#error "ezwin requires upstream LLVM Clang"
+#endif
+#if __clang_major__ != @EZWIN_LLVM_MAJOR@ || __clang_minor__ != @EZWIN_LLVM_MINOR@ || __clang_patchlevel__ != @EZWIN_LLVM_PATCH@
+#error "ezwin requires the LLVM release pinned in .llvm-version"
+#endif
+#if __cplusplus <= 202302L
+#error "ezwin requires C++26 mode"
+#endif
+#if !defined(_LIBCPP_VERSION) || _LIBCPP_VERSION != @EZWIN_LIBCPP_VERSION@
+#error "ezwin requires libc++ from the pinned LLVM release"
+#endif
+#if defined(__GLIBCXX__)
+#error "libstdc++ is not supported"
+#endif
