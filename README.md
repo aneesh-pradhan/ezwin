@@ -1,10 +1,12 @@
 # ezwin
 
-A native Linux terminal tool that writes a **UEFI-bootable Windows 11 USB installer** from the hybrid `.iso` files Microsoft publishes.
+[![LLVM build](https://github.com/aneesh-pradhan/ezwin/actions/workflows/build.yml/badge.svg)](https://github.com/aneesh-pradhan/ezwin/actions/workflows/build.yml)
 
-`dd` fails here because Windows ISOs are UDF hybrids, not disk images. FAT32 also cannot hold a >4 GiB `install.wim`.
+ezwin is a native Linux terminal tool that writes a UEFI-bootable Windows 11 installer onto a USB drive from the hybrid `.iso` files Microsoft publishes.
 
-The default layout follows **Microsoft’s Media Creation Tool**, documented from a working stick in [`docs/microsoft-mct-usb.md`](docs/microsoft-mct-usb.md):
+## Why
+
+Copying that ISO with `dd` does not produce a stick firmware will boot. Microsoft’s images are UDF hybrids, not raw disk images, and FAT32 cannot hold a `sources/install.wim` larger than 4 GiB. ezwin creates the layout Microsoft’s Media Creation Tool uses, documented from a working stick in [`docs/microsoft-mct-usb.md`](docs/microsoft-mct-usb.md):
 
 - **MBR**, one primary partition, type `0x0c` (FAT32 LBA), **active**, starting at **1 MiB**
 - **32 GiB FAT32** on USBs larger than that (Windows’ FAT32 cap); the rest of the stick is left empty
@@ -16,78 +18,164 @@ ezwin wipes GPT leftovers more thoroughly than MCT did on the inspected stick. I
 
 Rufus-style GPT+NTFS and WoeUSB-style NTFS+UEFI:NTFS remain available as `--layout ntfs` and `--layout mbr`.
 
-## Build
+## Warnings
 
-The required toolchain is **LLVM 23.1.2**, pinned in [`.llvm-version`](.llvm-version):
-Clang with **ISO C++26** (`-std=c++2c` / `-std=c++26`), LLD, libc++, libc++abi,
-compiler-rt and LLVM libunwind. LLVM's archiver and binary utilities are pinned too.
-GCC, libstdc++, GNU linkers, other LLVM versions and older C++ modes are rejected.
-Clang implements a subset of C++26; enabling the mode does not imply support for
-every C++26 feature. Linux's C library and the system libraries below remain required.
+**Flashing a USB drive destroys every partition and file on the target device.** `ezwin flash` repartitions and formats the whole disk. If several drives are plugged in, or if you pass the wrong path, this can erase an internal disk. Run `ezwin list`, then `sudo ezwin flash --dry-run Win11.iso`, and read the device path before typing `yes`. There is no undo.
 
-Install **CMake 3.30+**, Ninja, Make, Bash, curl, tar, xz and zstd, plus these dependencies:
+**The first build downloads a pinned LLVM 23.1.2 toolchain of about 2 GB** (the archive is 1920 MiB compressed and about 12 GB unpacked). Allow about 14 GB of free space while it installs. `scripts/install-llvm.sh` checks the archive against [`toolchains/SHA256SUMS`](toolchains/SHA256SUMS) and extracts it into `.toolchains/llvm-23.1.2`. It does not replace the system compiler. On x86-64 it also downloads Ubuntu’s ICU 70 compatibility libraries for the official LLD binary and keeps them inside that directory.
 
-| Fedora | Debian / Ubuntu | Arch |
-| --- | --- | --- |
-| `cmake` `ninja-build` `make` `pkgconf` `glibc-devel` `libstdc++` `zlib` `xz-libs` `systemd-devel` `libfdisk-devel` `libmount-devel` `wimlib-devel` `dosfstools` `ntfsprogs` | `cmake` (3.30+) `ninja-build` `make` `pkg-config` `libc6-dev` `libstdc++6` `zlib1g` `liblzma5` `libudev-dev` `libfdisk-dev` `libmount-dev` `libwim-dev` `dosfstools` `ntfs-3g` | `cmake` `ninja` `make` `pkgconf` `glibc` `gcc-libs` `zlib` `xz` `systemd` `util-linux` `wimlib` `dosfstools` `ntfs-3g` |
+## Demo
 
-```bash
-make toolchain      # download and verify the pinned LLVM release (~2 GB archive)
-make
-make test          # help/version and LLVM runtime smoke tests; no device writes
-sudo make install  # install the already-built program and res/uefi-ntfs.img
+Captured on Ubuntu 24.04.5 (x86-64) after the Debian install commands above, `make toolchain`, and `make test`. No USB device was written. `list` prints the block devices udev exposes on the machine that ran it; this host had no USB disk.
+
+```text
+$ ctest --preset llvm
+Test project /workspace/build/llvm
+    Start 1: cli-help
+1/3 Test #1: cli-help .........................   Passed    0.00 sec
+    Start 2: cli-version
+2/3 Test #2: cli-version ......................   Passed    0.00 sec
+    Start 3: llvm-runtime
+3/3 Test #3: llvm-runtime .....................   Passed    0.00 sec
+
+100% tests passed, 0 tests failed out of 3
+
+Total Test time (real) =   0.01 sec
+
+$ python3 tests/test_toolchain.py
+.........
+----------------------------------------------------------------------
+Ran 9 tests in 1.272s
+
+OK
+
+$ ./ezwin --version
+ezwin 0.5.0
+
+$ ./ezwin list
+DEVICE          SIZE      BUS     USB     MODEL
+(no USB disks found — plug one in, or pass --all)
+
+$ ./ezwin list --all
+DEVICE          SIZE      BUS     USB     MODEL
+/dev/vda        256.0 GiB -       no
+/dev/vdb        256.0 GiB -       no
+/dev/vdc        256.0 GiB -       no
 ```
 
-The installer supports Linux x86-64 and AArch64 and verifies official archives
-against committed SHA-256 checksums in [`toolchains/SHA256SUMS`](toolchains/SHA256SUMS).
-It installs into `.toolchains/llvm-23.1.2` without changing system compilers.
-Allow about 14 GB of free space during installation (12 GB after extraction).
-The x86-64 archive's LLD requires ICU 70; the installer also verifies and extracts
-Ubuntu's ICU compatibility libraries locally, with their license. Build launchers
-expose those libraries only to the LLVM tools. The compiler executables themselves
-use the host's libstdc++ runtime; ezwin is compiled and linked against LLVM runtimes.
-System C dependencies (for example Fedora's libudev) can also load libgcc_s
-transitively. The ezwin executable does not directly link libgcc or libstdc++.
-An existing complete installation of the exact same release can be selected using
-`cmake --preset llvm -DLLVM_ROOT=/absolute/path/to/llvm-23.1.2`.
+Configure on that run found `wimlib` 1.14.4 once `ntfs-3g-dev` and `libfuse-dev` were installed (`-- Found wimlib, version 1.14.4-1.1build2`).
 
-Make is a convenience wrapper around the shared CMake/Ninja build. Direct use:
+## Prerequisites
+
+The project needs **CMake 3.30 or newer**, Ninja, GNU Make, Bash, curl, tar, xz, zstd, pkg-config, Python 3, and `readelf` (from binutils). The C++ compiler is the pinned LLVM Clang. Linux’s C library and the system libraries below are still required. Clang implements a subset of C++26; turning the mode on does not mean every C++26 feature is available.
+
+`libwim-dev` / `wimlib-devel` ships a `wimlib.pc` with `Requires.private: libntfs-3g fuse`. CMake’s pkg-config check fails unless those two modules are installed. On Debian and Ubuntu they come from **`ntfs-3g-dev`** and **`libfuse-dev`** (FUSE 2). `libfuse3-dev` provides `fuse3.pc` and does **not** satisfy `wimlib.pc`.
+
+### Debian and Ubuntu
+
+Verified on Ubuntu 24.04.5. Ubuntu 24.04’s apt CMake is 3.28.3, which is too old, so CMake 4.3.0 is installed with pip (the same version [CI](.github/workflows/build.yml) uses). `--break-system-packages` is required on stock Ubuntu, where the system Python is externally managed; the flag is accepted when that marker is absent.
+
+Build and test:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  make ninja-build pkg-config curl ca-certificates xz-utils zstd \
+  python3 python3-pip binutils \
+  libc6-dev libstdc++6 zlib1g liblzma5 \
+  libudev-dev libfdisk-dev libmount-dev libwim-dev \
+  ntfs-3g-dev libfuse-dev
+python3 -m pip install --user --break-system-packages 'cmake==4.3.0'
+export PATH="$HOME/.local/bin:$PATH"
+cmake --version   # 4.3.0, or any CMake >= 3.30
+```
+
+Tools used only when flashing a stick (`make` and `make test` do not need them):
+
+```bash
+sudo apt-get install -y dosfstools ntfs-3g util-linux parted udev
+```
+
+`ntfs-3g-dev` already depends on `ntfs-3g` (`mkfs.ntfs` and the `ntfs-3g` mount helper). `dosfstools` provides `mkfs.fat`. `util-linux` provides `wipefs` and `partx`. `parted` provides `partprobe` (ezwin falls back to `partx` when `partprobe` is missing). `udev` provides `udevadm`.
+
+### Fedora
+
+Package names below match Fedora’s published provides: `wimlib-devel` requires `pkgconfig(libntfs-3g)` and `pkgconfig(fuse)`, which `ntfs-3g-devel` and `fuse-devel` (FUSE 2) provide. Confirm `cmake --version` is 3.30 or newer before building.
+
+```bash
+sudo dnf install -y \
+  cmake ninja-build make pkgconf \
+  glibc-devel libstdc++ zlib xz xz-libs curl zstd \
+  systemd-devel libfdisk-devel libmount-devel \
+  wimlib-devel ntfs-3g-devel fuse-devel \
+  dosfstools ntfsprogs util-linux parted \
+  python3 binutils
+```
+
+### Arch Linux
+
+Arch’s `wimlib` 1.14.5 `.pc` file has the same `Requires.private: libntfs-3g fuse` line. `libntfs-3g` ships `libntfs-3g.pc`. The module named `fuse` is FUSE 2, from `fuse2` (`fuse.pc`). `fuse3` does not provide it, even though the `wimlib` shared library itself links `libfuse3`.
+
+```bash
+sudo pacman -S --needed \
+  cmake ninja make pkgconf \
+  glibc gcc-libs zlib xz curl zstd \
+  systemd util-linux \
+  wimlib libntfs-3g fuse2 \
+  dosfstools ntfsprogs parted \
+  python binutils
+```
+
+## Build, test, and run
+
+From a clean clone, after the install command for your distribution:
+
+```bash
+git clone https://github.com/aneesh-pradhan/ezwin.git
+cd ezwin
+export PATH="$HOME/.local/bin:$PATH"   # Debian/Ubuntu pip CMake
+make toolchain    # downloads and verifies the ~2 GB LLVM archive
+make
+make test
+python3 tests/test_toolchain.py
+./ezwin --version
+./ezwin --help
+./ezwin list
+```
+
+`make test` runs help, version, and an LLVM runtime smoke test. It does not open a disk device. `tests/test_toolchain.py` checks the linked runtimes and rejects unsupported compilers. GCC rejection checks run only when `g++` is already installed. The script needs Python 3, `ldd`, and `readelf`.
+
+Direct CMake/Ninja, which is what Make wraps:
 
 ```bash
 cmake --preset llvm
-cmake --build --preset llvm   # or: ninja -C build/llvm
+cmake --build --preset llvm    # or: ninja -C build/llvm
 ctest --preset llvm
 ./build/llvm/ezwin --version
 ```
 
-`make` also copies the executable to `./ezwin`. Build products and downloaded
-toolchains are ignored by Git; the toolchain policy, presets and checksums are tracked.
-Ninja tracks command-line changes and regenerates when build configuration changes.
-After changing environment optimization flags, use `cmake --fresh --preset llvm`;
-CMake caches those flags at initial configuration. Toolchain-selection overrides
-are not supported. `PREFIX` and `DESTDIR` are supported for installation; build
-before running `sudo make install`. `make uninstall` removes the installed files.
+`make` also copies the executable to `./ezwin`. Build products and the downloaded toolchain are gitignored. The toolchain policy, presets, and checksums are tracked. Ninja regenerates when the command line changes. After changing optimization flags in the environment, reconfigure with `cmake --fresh --preset llvm`. Toolchain-selection overrides are rejected. `PREFIX` and `DESTDIR` work for installation; build before `sudo make install`. `make uninstall` removes the installed files.
 
-The executable uses the pinned LLVM shared runtimes through an embedded runtime
-search path. Keep that LLVM installation available after installing ezwin; for a
-system installation, use a stable, administrator-owned `LLVM_ROOT` (such as
-`/opt/llvm-23.1.2`) and rebuild before installing. Moving binaries to another machine
-requires those runtimes at the configured path or a separate packaging step.
+```bash
+sudo make install
+ezwin --version
+```
 
-[GitHub CI](.github/workflows/build.yml) uses the same checksum-pinned installation,
-builds through Make, checks direct Ninja use, runs safe smoke tests, validates the
-linked runtimes and tests rejection of unsupported toolchains. Run the policy checks
-locally with `python3 tests/test_toolchain.py` after building (requires Python 3,
-`ldd` and `readelf`; GCC rejection checks run when GCC is already installed).
-Configure the **LLVM / C++26** status check as required in the GitHub branch rules
-to enforce it before merging; committing a workflow alone does not enable that rule.
+The executable finds the pinned LLVM shared runtimes through an embedded runtime search path. Keep that LLVM installation in place after installing ezwin. For a system install, point `LLVM_ROOT` at a stable, administrator-owned tree such as `/opt/llvm-23.1.2` and rebuild before installing:
 
-To upgrade LLVM, update `.llvm-version`, replace the archive checksums with those
-from the [official release](https://github.com/llvm/llvm-project/releases), update
-the version references here, install the new toolchain, and configure a fresh build.
-Versions are deliberately pinned instead of following a moving `latest` download.
+```bash
+cmake --preset llvm -DLLVM_ROOT=/opt/llvm-23.1.2
+```
+
+Moving the binary to another machine requires those runtimes at the configured path, or a separate packaging step. The compiler executables use the host libstdc++. ezwin itself is compiled and linked against LLVM’s libc++, libc++abi, compiler-rt, and libunwind. System C libraries (for example libudev) may load `libgcc_s` transitively. The ezwin executable does not directly link libgcc or libstdc++.
+
+[GitHub CI](.github/workflows/build.yml) installs the Debian build packages above, including `ntfs-3g-dev` and `libfuse-dev`, then installs the checksum-pinned toolchain, builds through Make, runs the smoke tests, checks direct Ninja use, validates the linked runtimes, and tests rejection of unsupported toolchains. The **LLVM / C++26** job is the status check named on the badge above.
+
+To upgrade LLVM, update `.llvm-version`, replace the archive checksums with those from the [official release](https://github.com/llvm/llvm-project/releases), update the version references here, install the new toolchain, and configure a fresh build. Versions stay pinned on purpose.
 
 ## Usage
+
+`flash` erases the target USB drive. Start with `list` and `--dry-run`.
 
 ```bash
 ezwin list
@@ -101,7 +189,7 @@ sudo ezwin flash --layout mbr Win11.iso /dev/sdb   # WoeUSB-style MBR
 sudo ezwin flash --layout dual Win11.iso /dev/sdb
 ```
 
-If several USB disks are plugged in, pass the device path (`ezwin list`).
+If several USB disks are plugged in, pass the device path from `ezwin list`.
 
 ## Layouts
 
@@ -114,6 +202,6 @@ If several USB disks are plugged in, pass the device path (`ezwin list`).
 
 `res/uefi-ntfs.img` comes from [Rufus](https://github.com/pbatard/rufus) / [UEFI:NTFS](https://github.com/pbatard/uefi-ntfs); see `third_party/uefi-ntfs/NOTICE`. Needed only for `--layout ntfs` / `mbr`.
 
-## Status
+## License
 
-Private early tree. Treat it as a sharp disk tool: it **erases** the target device.
+[MIT](LICENSE). Copyright (c) 2026 Aneesh Pradhan.
